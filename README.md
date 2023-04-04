@@ -1,70 +1,94 @@
-## rtl8188eus v5.3.9
+# rtl8188eus
 
-# Realtek rtl8188eus &amp; rtl8188eu &amp; rtl8188etv WiFi drivers
+## 直接使用
+> 不适用于 `2023-02` 版本的 `debian` 镜像
 
-[![Monitor mode](https://img.shields.io/badge/monitor%20mode-supported-brightgreen.svg)](#)
-[![Frame Injection](https://img.shields.io/badge/frame%20injection-supported-brightgreen.svg)](#)
-[![MESH Mode](https://img.shields.io/badge/mesh%20mode-supported-brightgreen.svg)](#)
-[![GitHub issues](https://img.shields.io/github/issues/aircrack-ng/rtl8188eus.svg)](https://github.com/aircrack-ng/rtl8188eus/issues)
-[![GitHub forks](https://img.shields.io/github/forks/aircrack-ng/rtl8188eus.svg)](https://github.com/aircrack-ng/rtl8188eus/network)
-[![GitHub stars](https://img.shields.io/github/stars/aircrack-ng/rtl8188eus.svg)](https://github.com/aircrack-ng/rtl8188eus/stargazers)
-[![GitHub license](https://img.shields.io/github/license/aircrack-ng/rtl8812au.svg)](https://github.com/aircrack-ng/rtl8188eus/blob/master/LICENSE)<br>
-[![Android](https://img.shields.io/badge/android%20(8)-supported-brightgreen.svg)](#)
-[![aircrack-ng](https://img.shields.io/badge/aircrack--ng-supported-blue.svg)](#)
+点击[Release](https://github.com/waageid/rtl8188eus-visionfive2/releases)下载`.ko`文件，直接加载内核模块
 
+## 从源码编译
+> 由于原仓库中 `Makefile` 文件在处理 `ARCH` 类型的时候会将 `risv` 架构解释成 `riscv64`, 导致编译失败；  
+> 又由于目前 官方提供的[`debian` 镜像](https://drive.google.com/drive/folders/1cctIVdCfbPhKpyQ0PcmCQ92KCQjJ8JI5)(2023-03)`linux 内核`头文件不完整，导致直接在开发板上编译时出现内核头文件缺失的问题；  
+> 以下流程在`2023-03 debain系统`下测试验证
 
-# Supports
-* Android 12/13
-* MESH Support
-* Monitor mode
-* Frame injection
-* Up to kernel v6.0+
-... And a bunch of various wifi chipsets
-
-# Howto build/install
-1. You will need to blacklist another driver in order to use this one.
-2. `echo 'blacklist r8188eu'|sudo tee -a '/etc/modprobe.d/realtek.conf'`
-3. Reboot
-4. cd rtl8188eus
-5. `make && sudo make install`
-6. Reboot in order to blacklist and load the new driver/module.
-
-# MONITOR MODE howto
-Use these steps to enter monitor mode.
+## 文件目录结构
 ```
-$ sudo airmon-ng check kill
-$ sudo ip link set <interface> down
-$ sudo iw dev <interface> set type monitor
-```
-Frame injection test may be performed with
-(after kernel v5.2 scanning is slow, run a scan or simply an airodump-ng first!)
-```
-$ aireplay -9 <interface>
+`-- repos
+    |-- linux
+    `-- rtl8188eus-visionfive2 
 ```
 
-# NetworkManager configuration
-Add these lines below to "NetworkManager.conf" and ADD YOUR ADAPTER MAC below [keyfile]
-This will make the Network-Manager ignore the device, and therefore don't cause problems.
-```
-[device]
-wifi.scan-rand-mac-address=no
-
-[ifupdown]
-managed=false
-
-[connection]
-wifi.powersave=0
-
-[main]
-plugins=keyfile
-
-[keyfile]
-unmanaged-devices=mac:A7:A7:A7:A7:A7
+### 安装依赖
+```sh
+apt-get install libncurses-dev libssl-dev bc flex bison make gcc
+# 如果交叉编译需要添加 `gcc-riscv64-linux-gnu`
 ```
 
-# Credits
-Realtek       - https://www.realtek.com<br>
-Alfa Networks - https://www.alfa.com.tw<br>
-aircrack-ng.  - https://www.aircrack-ng.org<br>
-<br>
-And all those who may be using or contributing to it of anykind. Thanks!<br>
+### 编译`linux`内核
+
+> 内核仓库: [https://github.com/starfive-tech/linux](https://github.com/starfive-tech/linux)
+
+1. 拉取源码
+```sh
+git clone https://github.com/starfive-tech/linux.git --depth=1 -b JH7110_VisionFive2_devel
+```
+
+2. 配置及编译
+```sh
+cd linux
+
+make starfive_visionfive2_defconfig
+# 或交叉编译
+# make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- starfive_visionfive2_defconfig
+
+make menuconfig
+# 或交叉编译
+# make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- menuconfig
+
+# 执行 make menuconfig 后，依次按 General setup -> Local version - append to kernel release，编辑添加后面括号中版本后缀，包含短横线(-starfive)，按Save保存为 .config 编译配置（这一步目前还是需要的，通过执行 uname -r，如输出 5.15.0-starfive，则这一步不可省略，省略后会导致后面编译的 .ko模块内核版本不匹配）
+
+make -j4
+# 或交叉编译
+# make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j4
+
+# -j4指定编译的线程数
+```
+
+### 编译 rtl8188eus
+
+1. 准备   
+> 找到以下内容
+```Makefile
+all: modules
+
+modules:
+	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KSRC) M=$(shell pwd)  modules
+```
+
+> 将
+
+```Makefile
+$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KSRC) M=$(shell pwd)  modules
+```
+
+> 修改为
+
+```Makefile
+make ARCH=riscv -C ../linux M=$(shell pwd) modules -j4
+# ../linux 为内核源码路径，-j4 指定编译的线程数
+# 或交叉编译（未验证）
+# make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -C ../linux M=$(shell pwd) modules -j4
+```
+2. 编译
+```sh
+make
+```
+
+2. 安装
+```shell
+make install
+```
+
+3. 卸载
+```sh
+make uninstall
+```
